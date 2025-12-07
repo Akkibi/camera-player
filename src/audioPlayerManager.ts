@@ -1,4 +1,11 @@
 
+interface CustomWindow extends Window {
+  webkitAudioContext: {
+  new (contextOptions ?: AudioContextOptions): AudioContext;
+  prototype: AudioContext;
+}
+}
+
 export class AudioPlayerManager {
   private static instance: AudioPlayerManager;
   private audioContext: AudioContext | null = null;
@@ -21,7 +28,7 @@ export class AudioPlayerManager {
   public initializeAudioContext(): void {
     if (!this.audioContext) {
       // Use standard AudioContext constructor or the prefixed one for wider compatibility if needed
-      this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      this.audioContext = new (window.AudioContext || (window as Window as CustomWindow).webkitAudioContext)();
       this.gainNode = this.audioContext.createGain();
       this.gainNode.connect(this.audioContext.destination);
       // Start with volume low or muted
