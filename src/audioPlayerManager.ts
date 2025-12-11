@@ -114,7 +114,7 @@ export class AudioPlayerManager {
 
         // --- Edge Detection Configuration ---
         const THRESHOLD = 128; // Brightness threshold for dark vs light
-        const SMOOTHING_WINDOW = 3; // Reduce noise
+        const SMOOTHING_WINDOW = 4; // Reduce noise
 
         // Smooth the data first
         const smoothedData = this.applyMovingAverage(greenData, SMOOTHING_WINDOW);
