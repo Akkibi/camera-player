@@ -42,66 +42,183 @@ export class AudioPlayerManager {
      * based on image brightness/color.
      * @param greenData An array of 8-bit green channel values (0-255).
      */
+    // public playGreenDataAsAudio(greenData: Uint8ClampedArray): void {
+    //   if (!this.audioContext) {
+    //       console.error("AudioContext not initialized. Call initializeAudioContext() first.");
+    //       return;
+    //   }
+    //   const smoothedData = this.applyMovingAverage(greenData, 3);
+
+    //   const sampleRate = this.audioContext.sampleRate;
+    //   // Define how many samples represent the data for one pixel's sound.
+    //   // A higher number gives more resolution/duration per pixel.
+    //   const samplesPerPixel = Math.floor(sampleRate * 0.001); // 50ms per pixel for demonstration
+    //   const totalSamples = smoothedData.length * samplesPerPixel;
+
+    //   const audioBuffer = this.audioContext.createBuffer(1, totalSamples, sampleRate); // 1 channel (mono)
+    //   const output = audioBuffer.getChannelData(0);
+
+    //   // --- Configuration for Sound Mapping ---
+    //   const MIN_FREQUENCY = 100;  // Lowest possible pitch (e.g., for green=0)
+    //   const MAX_FREQUENCY = 1000; // Highest possible pitch (e.g., for green=255)
+    //   const FREQUENCY_RANGE = MAX_FREQUENCY - MIN_FREQUENCY;
+
+    //   // const MIN_PITCH_LOG = Math.log(MIN_FREQUENCY);
+    //   // const MAX_PITCH_LOG = Math.log(MAX_FREQUENCY * 10);
+
+    //   // --- Sound Generation Loop ---
+    //   for (let i = 0; i < smoothedData.length; i++) {
+    //       const greenValue = smoothedData[i];
+
+    //       // 1. Map Green Value to Frequency (Pitch)
+    //       // Map 0-255 to MIN_FREQUENCY to MAX_FREQUENCY
+    //       const frequency = MIN_FREQUENCY + (greenValue / 255.0) * FREQUENCY_RANGE;
+    //       // const frequency = MIN_PITCH_LOG + (greenValue / 255.0) * (MAX_PITCH_LOG - MIN_PITCH_LOG);
+
+    //       // 2. Map Green Value to Amplitude (Volume)
+    //       // Normalize 0-255 to 0.0-1.0 for volume control
+    //     const amplitude = 1 - (greenValue / 255.0) * 0.5;
+
+    //       // Calculate the angular increment (how much the sine wave phase changes per sample)
+    //       const phaseIncrement = (frequency * 2 * Math.PI) / sampleRate;
+
+    //       // Fill the corresponding audio samples
+    //       for (let j = 0; j < samplesPerPixel; j++) {
+    //           const sampleIndex = i * samplesPerPixel + j;
+
+    //           if (sampleIndex >= totalSamples) break;
+
+    //           // For this simple loop structure, we can calculate the phase offset based on the loop iteration:
+    //           const currentPhase = (i * samplesPerPixel + j) * phaseIncrement;
+
+    //           // The actual sample value is Sine(Phase) * Amplitude
+    //           output[sampleIndex] = Math.sin(currentPhase) * amplitude;
+    //       }
+    //   }
+
+    //   // --- Playback ---
+    //   const source = this.audioContext.createBufferSource();
+    //   source.buffer = audioBuffer;
+    //   source.connect(this.gainNode!); // Connect to the gain node
+    //   source.start(0); // Start immediately
+    // }
+
+
     public playGreenDataAsAudio(greenData: Uint8ClampedArray): void {
-      if (!this.audioContext) {
-          console.error("AudioContext not initialized. Call initializeAudioContext() first.");
-          return;
-      }
-      const smoothedData = this.applyMovingAverage(greenData, 3);
+        if (!this.audioContext) {
+            console.error("AudioContext not initialized. Call initializeAudioContext() first.");
+            return;
+        }
 
-      const sampleRate = this.audioContext.sampleRate;
-      // Define how many samples represent the data for one pixel's sound.
-      // A higher number gives more resolution/duration per pixel.
-      const samplesPerPixel = Math.floor(sampleRate * 0.001); // 50ms per pixel for demonstration
-      const totalSamples = smoothedData.length * samplesPerPixel;
+        const sampleRate = this.audioContext.sampleRate;
 
-      const audioBuffer = this.audioContext.createBuffer(1, totalSamples, sampleRate); // 1 channel (mono)
-      const output = audioBuffer.getChannelData(0);
+        // --- Edge Detection Configuration ---
+        const THRESHOLD = 128; // Brightness threshold for dark vs light
+        const SMOOTHING_WINDOW = 3; // Reduce noise
 
-      // --- Configuration for Sound Mapping ---
-      const MIN_FREQUENCY = 100;  // Lowest possible pitch (e.g., for green=0)
-      const MAX_FREQUENCY = 1000; // Highest possible pitch (e.g., for green=255)
-      const FREQUENCY_RANGE = MAX_FREQUENCY - MIN_FREQUENCY;
+        // Smooth the data first
+        const smoothedData = this.applyMovingAverage(greenData, SMOOTHING_WINDOW);
 
-      // const MIN_PITCH_LOG = Math.log(MIN_FREQUENCY);
-      // const MAX_PITCH_LOG = Math.log(MAX_FREQUENCY * 10);
+        // Detect edges (transitions from dark to light or light to dark)
+        const edges: number[] = [];
+        let previousState = smoothedData[0] > THRESHOLD;
 
-      // --- Sound Generation Loop ---
-      for (let i = 0; i < smoothedData.length; i++) {
-          const greenValue = smoothedData[i];
+        for (let i = 1; i < smoothedData.length; i++) {
+            const currentState = smoothedData[i] > THRESHOLD;
 
-          // 1. Map Green Value to Frequency (Pitch)
-          // Map 0-255 to MIN_FREQUENCY to MAX_FREQUENCY
-          const frequency = MIN_FREQUENCY + (greenValue / 255.0) * FREQUENCY_RANGE;
-          // const frequency = MIN_PITCH_LOG + (greenValue / 255.0) * (MAX_PITCH_LOG - MIN_PITCH_LOG);
+            // If state changed, we found an edge
+            if (currentState !== previousState) {
+                edges.push(i);
+                previousState = currentState;
+            }
+        }
 
-          // 2. Map Green Value to Amplitude (Volume)
-          // Normalize 0-255 to 0.0-1.0 for volume control
-        const amplitude = 1 - (greenValue / 255.0) * 0.5;
+        // If no edges detected, create silent buffer
+        if (edges.length === 0) {
+            const silentBuffer = this.audioContext.createBuffer(1, sampleRate * 0.1, sampleRate);
+            const source = this.audioContext.createBufferSource();
+            source.buffer = silentBuffer;
+            source.connect(this.gainNode!);
+            source.start(0);
+            return;
+        }
 
-          // Calculate the angular increment (how much the sine wave phase changes per sample)
-          const phaseIncrement = (frequency * 2 * Math.PI) / sampleRate;
+        // --- Audio Generation Configuration ---
+        // Map pixel position to time
+        const pixelsPerSecond = 1000; // Speed of "scanning"
+        const totalDuration = smoothedData.length / pixelsPerSecond;
+        const totalSamples = Math.floor(totalDuration * sampleRate);
 
-          // Fill the corresponding audio samples
-          for (let j = 0; j < samplesPerPixel; j++) {
-              const sampleIndex = i * samplesPerPixel + j;
+        const audioBuffer = this.audioContext.createBuffer(1, totalSamples, sampleRate);
+        const output = audioBuffer.getChannelData(0);
 
-              if (sampleIndex >= totalSamples) break;
+        // --- Generate Click/Beep for Each Edge ---
+        const CLICK_DURATION = 0.01; // 3ms click (very short!)
+        const CLICK_FREQUENCY = 2000; // 2kHz beep frequency
+        const clickSamples = Math.floor(CLICK_DURATION * sampleRate);
 
-              // For this simple loop structure, we can calculate the phase offset based on the loop iteration:
-              const currentPhase = (i * samplesPerPixel + j) * phaseIncrement;
+        for (const edgePosition of edges) {
+            // Convert pixel position to time, then to sample index
+            const timePosition = edgePosition / pixelsPerSecond;
+            const startSample = Math.floor(timePosition * sampleRate);
 
-              // The actual sample value is Sine(Phase) * Amplitude
-              output[sampleIndex] = Math.sin(currentPhase) * amplitude;
-          }
-      }
+            // Generate a short beep/click at this position
+            for (let i = 0; i < clickSamples; i++) {
+                const sampleIndex = startSample + i;
+                if (sampleIndex >= totalSamples) break;
 
-      // --- Playback ---
-      const source = this.audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(this.gainNode!); // Connect to the gain node
-      source.start(0); // Start immediately
+                // Create a click with exponential decay envelope
+                const t = i / clickSamples;
+                const envelope = Math.exp(-t * 8); // Quick decay
+
+                // Generate sine wave for the beep
+                const phase = (2 * Math.PI * CLICK_FREQUENCY * i) / sampleRate;
+
+                // Add to output (allowing clicks to overlap/accumulate)
+                output[sampleIndex] += Math.sin(phase) * envelope * 0.3;
+            }
+        }
+
+        // Normalize to prevent clipping
+        let maxAmplitude = 0;
+        for (let i = 0; i < totalSamples; i++) {
+            maxAmplitude = Math.max(maxAmplitude, Math.abs(output[i]));
+        }
+        if (maxAmplitude > 0) {
+            for (let i = 0; i < totalSamples; i++) {
+                output[i] /= maxAmplitude;
+            }
+        }
+
+        // --- Playback ---
+        const source = this.audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(this.gainNode!);
+        source.start(0);
     }
+
+    // Helper method for moving average smoothing
+    // private applyMovingAverage(data: Uint8ClampedArray, windowSize: number): Uint8ClampedArray {
+    //     const smoothed = new Uint8ClampedArray(data.length);
+    //     const halfWindow = Math.floor(windowSize / 2);
+
+    //     for (let i = 0; i < data.length; i++) {
+    //         let sum = 0;
+    //         let count = 0;
+
+    //         for (let j = -halfWindow; j <= halfWindow; j++) {
+    //             const index = i + j;
+    //             if (index >= 0 && index < data.length) {
+    //                 sum += data[index];
+    //                 count++;
+    //             }
+    //         }
+
+    //         smoothed[i] = Math.round(sum / count);
+    //     }
+
+    //     return smoothed;
+    // }
 
     /**
      * Applies a simple moving average filter to an array.
