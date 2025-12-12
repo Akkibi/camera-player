@@ -104,6 +104,99 @@ export class AudioPlayerManager {
     // }
 
 
+    // public playGreenDataAsAudio(greenData: Uint8ClampedArray): void {
+    //     if (!this.audioContext) {
+    //         console.error("AudioContext not initialized. Call initializeAudioContext() first.");
+    //         return;
+    //     }
+
+    //     const sampleRate = this.audioContext.sampleRate;
+
+    //     // --- Edge Detection Configuration ---
+    //     const THRESHOLD = 128; // Brightness threshold for dark vs light
+    //     const SMOOTHING_WINDOW = 4; // Reduce noise
+
+    //     // Smooth the data first
+    //     const smoothedData = this.applyMovingAverage(greenData, SMOOTHING_WINDOW);
+
+    //     // Detect edges (transitions from dark to light or light to dark)
+    //     const edges: number[] = [];
+    //     let previousState = smoothedData[0] > THRESHOLD;
+
+    //     for (let i = 1; i < smoothedData.length; i++) {
+    //         const currentState = smoothedData[i] > THRESHOLD;
+
+    //         // If state changed, we found an edge
+    //         if (currentState !== previousState) {
+    //             edges.push(i);
+    //             previousState = currentState;
+    //         }
+    //     }
+
+    //     // If no edges detected, create silent buffer
+    //     if (edges.length === 0) {
+    //         const silentBuffer = this.audioContext.createBuffer(1, sampleRate * 0.1, sampleRate);
+    //         const source = this.audioContext.createBufferSource();
+    //         source.buffer = silentBuffer;
+    //         source.connect(this.gainNode!);
+    //         source.start(0);
+    //         return;
+    //     }
+
+    //     // --- Audio Generation Configuration ---
+    //     // Map pixel position to time
+    //     const pixelsPerSecond = 1000; // Speed of "scanning"
+    //     const totalDuration = smoothedData.length / pixelsPerSecond;
+    //     const totalSamples = Math.floor(totalDuration * sampleRate);
+
+    //     const audioBuffer = this.audioContext.createBuffer(1, totalSamples, sampleRate);
+    //     const output = audioBuffer.getChannelData(0);
+
+    //     // --- Generate Click/Beep for Each Edge ---
+    //     const CLICK_DURATION = 0.01; // 3ms click (very short!)
+    //     const CLICK_FREQUENCY = 2000; // 2kHz beep frequency
+    //     const clickSamples = Math.floor(CLICK_DURATION * sampleRate);
+
+    //     for (const edgePosition of edges) {
+    //         // Convert pixel position to time, then to sample index
+    //         const timePosition = edgePosition / pixelsPerSecond;
+    //         const startSample = Math.floor(timePosition * sampleRate);
+
+    //         // Generate a short beep/click at this position
+    //         for (let i = 0; i < clickSamples; i++) {
+    //             const sampleIndex = startSample + i;
+    //             if (sampleIndex >= totalSamples) break;
+
+    //             // Create a click with exponential decay envelope
+    //             const t = i / clickSamples;
+    //             const envelope = Math.exp(-t * 8); // Quick decay
+
+    //             // Generate sine wave for the beep
+    //             const phase = (2 * Math.PI * CLICK_FREQUENCY * i) / sampleRate;
+
+    //             // Add to output (allowing clicks to overlap/accumulate)
+    //             output[sampleIndex] += Math.sin(phase) * envelope * 0.3;
+    //         }
+    //     }
+
+    //     // Normalize to prevent clipping
+    //     let maxAmplitude = 0;
+    //     for (let i = 0; i < totalSamples; i++) {
+    //         maxAmplitude = Math.max(maxAmplitude, Math.abs(output[i]));
+    //     }
+    //     if (maxAmplitude > 0) {
+    //         for (let i = 0; i < totalSamples; i++) {
+    //             output[i] /= maxAmplitude;
+    //         }
+    //     }
+
+    //     // --- Playback ---
+    //     const source = this.audioContext.createBufferSource();
+    //     source.buffer = audioBuffer;
+    //     source.connect(this.gainNode!);
+    //     source.start(0);
+    // }
+    //
     public playGreenDataAsAudio(greenData: Uint8ClampedArray): void {
         if (!this.audioContext) {
             console.error("AudioContext not initialized. Call initializeAudioContext() first.");
@@ -119,16 +212,32 @@ export class AudioPlayerManager {
         // Smooth the data first
         const smoothedData = this.applyMovingAverage(greenData, SMOOTHING_WINDOW);
 
-        // Detect edges (transitions from dark to light or light to dark)
-        const edges: number[] = [];
+        // Detect edges and track distance between them
+        interface Edge {
+            position: number;
+            transitionType: 'dark-to-light' | 'light-to-dark';
+            pixelsSinceLast: number;
+        }
+
+        const edges: Edge[] = [];
         let previousState = smoothedData[0] > THRESHOLD;
+        let lastEdgePosition = 0;
 
         for (let i = 1; i < smoothedData.length; i++) {
             const currentState = smoothedData[i] > THRESHOLD;
 
             // If state changed, we found an edge
             if (currentState !== previousState) {
-                edges.push(i);
+                const transitionType = currentState ? 'dark-to-light' : 'light-to-dark';
+                const pixelsSinceLast = i - lastEdgePosition;
+
+                edges.push({
+                    position: i,
+                    transitionType,
+                    pixelsSinceLast
+                });
+
+                lastEdgePosition = i;
                 previousState = currentState;
             }
         }
@@ -144,25 +253,43 @@ export class AudioPlayerManager {
         }
 
         // --- Audio Generation Configuration ---
-        // Map pixel position to time
-        const pixelsPerSecond = 1000; // Speed of "scanning"
+        const pixelsPerSecond = 1000;
         const totalDuration = smoothedData.length / pixelsPerSecond;
         const totalSamples = Math.floor(totalDuration * sampleRate);
 
         const audioBuffer = this.audioContext.createBuffer(1, totalSamples, sampleRate);
         const output = audioBuffer.getChannelData(0);
 
-        // --- Generate Click/Beep for Each Edge ---
-        const CLICK_DURATION = 0.01; // 3ms click (very short!)
-        const CLICK_FREQUENCY = 2000; // 2kHz beep frequency
+        // --- Pitch Mapping Configuration ---
+        const MIN_FREQUENCY = 200;  // Lowest pitch (more pixels)
+        const MAX_FREQUENCY = 4000; // Highest pitch (fewer pixels)
+        const MIN_PIXELS = 5;       // Minimum distance to consider
+        const MAX_PIXELS = 200;     // Maximum distance for mapping
+
+        const CLICK_DURATION = 0.01; // 10ms click
         const clickSamples = Math.floor(CLICK_DURATION * sampleRate);
 
-        for (const edgePosition of edges) {
+        // --- Generate Click/Beep for Each Dark-to-Light Edge ---
+        for (const edge of edges) {
+            // Only generate sound for dark-to-light transitions
+            if (edge.transitionType !== 'dark-to-light') continue;
+
+            // Map pixel distance to frequency (inverse relationship)
+            // Fewer pixels = higher pitch, more pixels = lower pitch
+            const clampedPixels = Math.max(MIN_PIXELS, Math.min(MAX_PIXELS, edge.pixelsSinceLast));
+
+            // Inverse mapping: normalize to 0-1, then invert
+            const normalizedDistance = (clampedPixels - MIN_PIXELS) / (MAX_PIXELS - MIN_PIXELS);
+            const invertedDistance = 1 - normalizedDistance;
+
+            // Map to frequency range
+            const frequency = MIN_FREQUENCY + (invertedDistance * (MAX_FREQUENCY - MIN_FREQUENCY));
+
             // Convert pixel position to time, then to sample index
-            const timePosition = edgePosition / pixelsPerSecond;
+            const timePosition = edge.position / pixelsPerSecond;
             const startSample = Math.floor(timePosition * sampleRate);
 
-            // Generate a short beep/click at this position
+            // Generate a short beep/click at this position with calculated frequency
             for (let i = 0; i < clickSamples; i++) {
                 const sampleIndex = startSample + i;
                 if (sampleIndex >= totalSamples) break;
@@ -171,8 +298,8 @@ export class AudioPlayerManager {
                 const t = i / clickSamples;
                 const envelope = Math.exp(-t * 8); // Quick decay
 
-                // Generate sine wave for the beep
-                const phase = (2 * Math.PI * CLICK_FREQUENCY * i) / sampleRate;
+                // Generate sine wave for the beep with variable frequency
+                const phase = (2 * Math.PI * frequency * i) / sampleRate;
 
                 // Add to output (allowing clicks to overlap/accumulate)
                 output[sampleIndex] += Math.sin(phase) * envelope * 0.3;

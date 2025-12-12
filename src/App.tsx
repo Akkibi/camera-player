@@ -9,11 +9,15 @@ function App() {
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   // Default to 'user' (front camera), switchable to 'environment' (back camera)
   const [facingMode, setFacingMode] = useState<CameraMode>('user');
+  const [isAudioActive, setIsAudioActive] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioPlayerManagerRef = useRef<AudioPlayerManager>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameIdRef = useRef<number | null>(null);
+
+  // Use a ref to track audio active state without triggering re-renders
+  const isAudioActiveRef = useRef(false);
 
   useEffect(() => {
     if (!audioPlayerManagerRef.current) {
@@ -43,14 +47,12 @@ function App() {
         }
       } catch (err) {
         console.error("Error accessing the camera: ", err);
-        // If the specific camera fails, don't necessarily turn off the whole feature,
-        // but you might want to handle the error (e.g., if no back camera exists).
         setIsCameraActive(false);
       }
     };
 
     const processFrame = () => {
-      if (!videoRef.current || !canvasRef.current || !audioPlayerManagerRef.current || !isCameraActive || !isAudioPlaying) return;
+      if (!videoRef.current || !canvasRef.current || !audioPlayerManagerRef.current) return;
 
       const video = videoRef.current;
       const canvas = canvasRef.current;
@@ -82,29 +84,29 @@ function App() {
     const FPS_LIMIT = 30;
 
     const renderLoop = (time: DOMHighResTimeStamp) => {
-      if (isCameraActive) {
-        if (time - lastTime > (1000 / FPS_LIMIT)) {
-          processFrame();
-          lastTime = time;
-        }
-        animationFrameIdRef.current = requestAnimationFrame(renderLoop);
-      }
-    };
-
-    const startProcessingLoop = () => {
-      if (isCameraActive && isAudioPlaying && !animationFrameIdRef.current) {
-        animationFrameIdRef.current = requestAnimationFrame(renderLoop);
-      } else if ((!isAudioPlaying || !isCameraActive) && animationFrameIdRef.current) {
-        cancelAnimationFrame(animationFrameIdRef.current);
+      if (!isCameraActive || !isAudioPlaying) {
         animationFrameIdRef.current = null;
+        return;
       }
+
+      if (time - lastTime > (1000 / FPS_LIMIT)) {
+        // Check the ref instead of state
+        if (isAudioActiveRef.current) {
+          processFrame();
+        }
+        lastTime = time;
+      }
+      animationFrameIdRef.current = requestAnimationFrame(renderLoop);
     };
 
     if (isCameraActive) {
       startCamera();
     }
 
-    startProcessingLoop();
+    // Start the loop if both camera and audio are active
+    if (isCameraActive && isAudioPlaying && !animationFrameIdRef.current) {
+      animationFrameIdRef.current = requestAnimationFrame(renderLoop);
+    }
 
     return () => {
       if (stream) {
@@ -115,7 +117,6 @@ function App() {
         animationFrameIdRef.current = null;
       }
     };
-    // Added facingMode to dependency array so camera restarts when it changes
   }, [isCameraActive, isAudioPlaying, facingMode]);
 
   const handleCameraToggle = () => {
@@ -136,7 +137,18 @@ function App() {
     }
 
     setIsAudioPlaying(prev => !prev);
-  }
+  };
+
+  // Press and hold handlers
+  const handleAudioPressStart = () => {
+    isAudioActiveRef.current = true;
+    setIsAudioActive(true);
+  };
+
+  const handleAudioPressEnd = () => {
+    isAudioActiveRef.current = false;
+    setIsAudioActive(false);
+  };
 
   return (
     <>
@@ -148,8 +160,8 @@ function App() {
               ref={videoRef}
               autoPlay
               playsInline
-              muted // Always mute video element to prevent feedback loops, since you generate audio manually
-              className='absolute inset-0 object-cover w-full h-full' // Changed to object-cover for better mobile fill
+              muted
+              className='absolute inset-0 object-cover w-full h-full'
             />
           )}
           {!isCameraActive && (
@@ -160,7 +172,6 @@ function App() {
 
           {/* Controls Container */}
           <div className='absolute bottom-2 left-2 right-2 flex justify-between'>
-
             {/* Switch Camera Button (Only visible if camera is active) */}
             {isCameraActive && (
                 <button
@@ -179,11 +190,33 @@ function App() {
                 {isCameraActive ? 'Stop Camera' : 'Start Camera'}
             </button>
           </div>
-
         </div>
-        <button onClick={handleAudioPlay} className='flex-none py-10 bg-gray-800 rounded-xl text-2xl font-black text-white active:bg-gray-700'>
-          {isAudioPlaying ? 'Stop Audio' : 'Play Audio'}
-        </button>
+
+        {/* Press and hold audio button */}
+        <div className='flex flex-col gap-2'>
+          <button
+            onClick={handleAudioPlay}
+            className='flex-none py-4 bg-gray-800 rounded-xl text-xl font-black text-white active:bg-gray-700'
+          >
+            {isAudioPlaying ? 'Stop Audio' : 'Play Audio'}
+          </button>
+
+          <button
+            onMouseDown={handleAudioPressStart}
+            onMouseUp={handleAudioPressEnd}
+            onMouseLeave={handleAudioPressEnd}
+            onTouchStart={handleAudioPressStart}
+            onTouchEnd={handleAudioPressEnd}
+            className={`flex-none py-10 rounded-xl text-2xl font-black text-white transition-colors ${
+              isAudioActive
+                ? 'bg-green-600 active:bg-green-700'
+                : 'bg-gray-800 active:bg-gray-700'
+            }`}
+            disabled={!isAudioPlaying}
+          >
+            {isAudioActive ? 'Recording Audio...' : 'Hold to Record'}
+          </button>
+        </div>
       </div>
     </>
   );
